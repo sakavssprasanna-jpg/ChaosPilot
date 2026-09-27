@@ -20,10 +20,10 @@ def recall_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int = 3) -
     if not relevant_ids or k <= 0:
         return 0.0
     top_k = retrieved_ids[:k]
-    # Check match either by exact ID or substring match
+    # Check match either by exact ID or substring match (case-insensitive)
     hits = 0
     for rel in relevant_ids:
-        if any(rel == item or rel in item for item in top_k):
+        if any(rel.lower() == item.lower() or rel.lower() in item.lower() for item in top_k):
             hits += 1
     return round(hits / len(relevant_ids), 4)
 
@@ -35,7 +35,7 @@ def precision_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int = 3
     top_k = retrieved_ids[:k]
     hits = 0
     for item in top_k:
-        if any(rel == item or rel in item for rel in relevant_ids):
+        if any(rel.lower() == item.lower() or rel.lower() in item.lower() for rel in relevant_ids):
             hits += 1
     return round(hits / min(k, len(top_k)) if top_k else 0.0, 4)
 
@@ -43,7 +43,7 @@ def precision_at_k(retrieved_ids: List[str], relevant_ids: List[str], k: int = 3
 def mean_reciprocal_rank(retrieved_ids: List[str], relevant_ids: List[str]) -> float:
     """Calculates MRR: reciprocal rank of the first relevant retrieved chunk."""
     for rank, item in enumerate(retrieved_ids, start=1):
-        if any(rel == item or rel in item for rel in relevant_ids):
+        if any(rel.lower() == item.lower() or rel.lower() in item.lower() for rel in relevant_ids):
             return round(1.0 / rank, 4)
     return 0.0
 

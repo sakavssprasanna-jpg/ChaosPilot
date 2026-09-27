@@ -65,6 +65,36 @@ class ClaimStatus(str, Enum):
     REFUTED = "refuted"
 
 
+def classify_claim_support(
+    evidence_ids: Optional[List[str]] = None,
+    modalities: Optional[List[str]] = None,
+    contradictions: Optional[List[str]] = None
+) -> str:
+    """Evaluates qualitative claim support strength according to strict grounding invariants:
+
+    - Case E: >= 1 contradiction -> CONTRADICTED
+    - Case A: 0 evidence -> UNSUPPORTED
+    - Case B: 1 valid evidence -> WEAKLY_SUPPORTED
+    - Case D: >= 3 items across >= 2 modalities + 0 contradictions -> STRONGLY_SUPPORTED
+    - Case C: >= 2 evidence items in same modality (or fewer than 3 across >=2) -> SUPPORTED
+    """
+    if contradictions and len(contradictions) > 0:
+        return ClaimSupportStrength.CONTRADICTED.value
+
+    ev_list = evidence_ids or []
+    if len(ev_list) == 0:
+        return ClaimSupportStrength.UNSUPPORTED.value
+
+    if len(ev_list) == 1:
+        return ClaimSupportStrength.WEAKLY_SUPPORTED.value
+
+    distinct_modalities = set(modalities or [])
+    if len(ev_list) >= 3 and len(distinct_modalities) >= 2:
+        return ClaimSupportStrength.STRONGLY_SUPPORTED.value
+
+    return ClaimSupportStrength.SUPPORTED.value
+
+
 # ---------------------------------------------------------------------------
 # Data Models
 # ---------------------------------------------------------------------------
@@ -542,7 +572,7 @@ class EvidenceGraphBuilder:
                 graph.add_edge(GraphEdge(f"voice:{eid}", f"inc:{inc_id}", EdgeType.OBSERVED_ON.value))
 
         # 5. Formulate & Correlate Grounded Claims
-        self._correlate_claims(graph, state, telemetry_eids, rag_eids, git_eids, fault_active)
+        self._correlate_claims(graph, state, telemetry_eids, rag_eids, git_eids, visual_eids, voice_eids, fault_active)
 
         # 6. Hypotheses Nodes
         for hyp in state.hypotheses:
@@ -614,29 +644,37 @@ class EvidenceGraphBuilder:
         telemetry_eids: List[str],
         rag_eids: List[str],
         git_eids: List[str],
-        fault_active: bool
+        visual_eids: Optional[List[str]] = None,
+        voice_eids: Optional[List[str]] = None,
+        fault_active: bool = False
     ) -> None:
-        """Derives grounded claims and evaluates qualitative support strength."""
-        # Claim 1: Primary Outage Claim (Payment Timeout Propagation)
-        supp_1 = [eid for eid in telemetry_eids if "payment" in eid or "gateway" in eid]
-        supp_1.extend([eid for eid in rag_eids if "timeout" in eid or "payment" in eid])
+        """Derives grounded claims and evaluates qualitative support strength using classify_claim_support."""
+        # Collect observed modalities for claim 1
+        modalities_1 = set()
+        supp_1 = []
+        tel_matches = [eid for eid in telemetry_eids if "payment" in eid or "gateway" in eid]
+        if tel_matches:
+            supp_1.extend(tel_matches)
+            modalities_1.add("telemetry")
+        rag_matches = [eid for eid in rag_eids if "timeout" in eid or "payment" in eid]
+        if rag_matches:
+            supp_1.extend(rag_matches)
+            modalities_1.add("runbook_knowledge")
         if fault_active:
             supp_1.append("fault:payment_timeout")
+            modalities_1.add("target_fault")
+        if git_eids:
+            supp_1.extend(git_eids)
+            modalities_1.add("git_history")
+        if visual_eids:
+            supp_1.extend(visual_eids)
+            modalities_1.add("visual_observation")
+        if voice_eids:
+            supp_1.extend(voice_eids)
+            modalities_1.add("voice_input")
 
-        # Determine support strength qualitatively
-        # Telemetry + Runbooks + Active Fault = STRONGLY_SUPPORTED
-        if len(supp_1) >= 3 and any("tel:" in f"tel:{e}" for e in supp_1) and any("doc:" in f"doc:{e}" for e in supp_1):
-            strength_1 = ClaimSupportStrength.STRONGLY_SUPPORTED.value
-            status_1 = ClaimStatus.CONFIRMED.value
-        elif len(supp_1) >= 2:
-            strength_1 = ClaimSupportStrength.SUPPORTED.value
-            status_1 = ClaimStatus.CONFIRMED.value
-        elif len(supp_1) == 1:
-            strength_1 = ClaimSupportStrength.WEAKLY_SUPPORTED.value
-            status_1 = ClaimStatus.CANDIDATE.value
-        else:
-            strength_1 = ClaimSupportStrength.UNSUPPORTED.value
-            status_1 = ClaimStatus.CANDIDATE.value
+        strength_1 = classify_claim_support(supp_1, list(modalities_1), [])
+        status_1 = ClaimStatus.CONFIRMED.value if strength_1 in (ClaimSupportStrength.SUPPORTED.value, ClaimSupportStrength.STRONGLY_SUPPORTED.value) else ClaimStatus.CANDIDATE.value
 
         claim_1 = GroundedClaim(
             claim_id="claim_payment_timeout_propagation",
@@ -650,36 +688,33 @@ class EvidenceGraphBuilder:
         graph.add_claim(claim_1)
 
         # Claim 2: Alternative Candidate Claim (Order Service Crash)
-        # Check if Order Service is actually healthy
-        order_errors = 0
-        for e in state.evidence:
-            cnt = getattr(e, "content", {})
-            if isinstance(cnt, dict) and cnt.get("service") == "order-service":
-                order_errors += cnt.get("error_count", 0)
-
         contra_2 = []
         for e in state.evidence:
             cnt = getattr(e, "content", {})
             if isinstance(cnt, dict) and (cnt.get("service") == "order-service" or "order" in getattr(e, "evidence_id", "")):
                 contra_2.append(getattr(e, "evidence_id"))
 
+        strength_2 = classify_claim_support([], [], contra_2)
+        status_2 = ClaimStatus.REFUTED.value if strength_2 == ClaimSupportStrength.CONTRADICTED.value else ClaimStatus.CANDIDATE.value
+
         claim_2 = GroundedClaim(
             claim_id="claim_order_service_crash",
             statement="Order Service crashed, unresponsive, or experiencing unhandled internal server exceptions.",
             evidence_ids=[],
-            support_strength=ClaimSupportStrength.CONTRADICTED.value if contra_2 else ClaimSupportStrength.UNSUPPORTED.value,
-            status=ClaimStatus.REFUTED.value if contra_2 else ClaimStatus.CANDIDATE.value,
+            support_strength=strength_2,
+            status=status_2,
             contradictions=contra_2,
             created_at=state.started_at
         )
         graph.add_claim(claim_2)
 
         # Claim 3: Gateway Routing Misconfiguration
+        strength_3 = classify_claim_support([], [], [])
         claim_3 = GroundedClaim(
             claim_id="claim_gateway_misconfig",
             statement="API Gateway routing misconfiguration or internal client timeout budget mismatch dropped checkout traffic.",
             evidence_ids=[],
-            support_strength=ClaimSupportStrength.UNSUPPORTED.value,
+            support_strength=strength_3,
             status=ClaimStatus.CANDIDATE.value,
             contradictions=[],
             created_at=state.started_at
@@ -691,12 +726,15 @@ class EvidenceGraphBuilder:
         if fault_active:
             contra_4.append("fault:payment_timeout")
 
+        strength_4 = classify_claim_support([], [], contra_4)
+        status_4 = ClaimStatus.REFUTED.value if strength_4 == ClaimSupportStrength.CONTRADICTED.value else ClaimStatus.CONFIRMED.value
+
         claim_4 = GroundedClaim(
             claim_id="claim_nominal_health",
             statement="All microservices are operating nominally within SLA thresholds; no active incident.",
             evidence_ids=[],
-            support_strength=ClaimSupportStrength.CONTRADICTED.value if contra_4 else ClaimSupportStrength.SUPPORTED.value,
-            status=ClaimStatus.REFUTED.value if contra_4 else ClaimStatus.CONFIRMED.value,
+            support_strength=strength_4,
+            status=status_4,
             contradictions=contra_4,
             created_at=state.started_at
         )
