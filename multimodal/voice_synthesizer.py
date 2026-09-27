@@ -49,9 +49,11 @@ class VoiceSynthesizer:
         audio_bytes = None
         last_error = None
 
-        for attempt in range(1, 4):
+        tlds = ["com", "co.uk", "ca", "com"]
+        for attempt in range(1, 5):
+            tld = tlds[(attempt - 1) % len(tlds)]
             try:
-                tts = gTTS(text=text.strip(), lang=self.language)
+                tts = gTTS(text=text.strip(), lang=self.language, tld=tld, timeout=10.0)
                 fp = io.BytesIO()
                 tts.write_to_fp(fp)
                 audio_bytes = fp.getvalue()
@@ -59,7 +61,7 @@ class VoiceSynthesizer:
                     break
             except Exception as e:
                 last_error = e
-                time.sleep(0.3 * attempt)
+                time.sleep(0.6 * attempt)
 
         if not audio_bytes:
             return VoiceSynthesisResult(
