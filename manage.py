@@ -384,6 +384,13 @@ def main():
     multi_ev_p.add_argument("--audio", type=str, default=None, help="Optional audio evidence file")
     multi_ev_p.add_argument("--image", type=str, default=None, help="Optional visual evidence image")
 
+    # Stage 5 Agent Commands
+    agent_inv_p = subparsers.add_parser("agent-investigate", help="Run read-only SRE agent investigation on current environment")
+    agent_inv_p.add_argument("--snapshot", type=str, default=None, help="Path to incident snapshot (defaults to latest)")
+
+    agent_inc_p = subparsers.add_parser("agent-incident", help="Run full real SRE incident simulation, diagnosis, and verified recovery")
+    agent_inc_p.add_argument("--count", type=int, default=6, help="Requests during incident phase")
+
     restart_p = subparsers.add_parser("restart", help="Restart a specific service")
     restart_p.add_argument("service", choices=["gateway", "order-service", "payment-service"])
 
@@ -443,6 +450,10 @@ def main():
         cmd_visualize_telemetry(args.output, window_seconds=args.window)
     elif args.command == "multimodal-evidence":
         cmd_multimodal_evidence(args.snapshot, audio_path=args.audio, image_path=args.image)
+    elif args.command == "agent-investigate":
+        cmd_agent_investigate(env, snapshot_path=args.snapshot)
+    elif args.command == "agent-incident":
+        cmd_agent_incident(env, count=args.count)
     elif args.command == "fault":
         if args.fault_action == "inject":
             cmd_fault_inject(args.mode, args.delay)
@@ -450,6 +461,132 @@ def main():
             cmd_fault_reset()
         else:
             fault_p.print_help()
+
+def cmd_agent_investigate(env: ProcessTargetEnvironment, snapshot_path: str = None):
+    from agent.orchestrator import IncidentOrchestrator
+    orchestrator = IncidentOrchestrator(env=env)
+
+    snapshot_data = None
+    if snapshot_path:
+        with open(snapshot_path, "r", encoding="utf-8") as f:
+            snapshot_data = json.load(f)
+
+    print("\n[ChaosPilot SRE Agent] Initiating read-only incident investigation...")
+    state = orchestrator.investigate(snapshot_data=snapshot_data)
+
+    print(f"\n======================================================================")
+    print(f" [ChaosPilot Agent] INVESTIGATION REPORT: {state.incident_id}")
+    print(f" Current Phase:  {state.phase}")
+    print(f" Started At:     {state.started_at}")
+    print(f"======================================================================\n")
+
+    print("1. OBSERVATIONS:")
+    for obs in state.observations:
+        print(f"  * {obs}")
+
+    print(f"\n2. CORRELATED EVIDENCE ({len(state.evidence)} items):")
+    for e in state.evidence[:6]:
+        print(f"  * [{e.modality.upper()}] {e.provenance}")
+
+    print("\n3. EVALUATED HYPOTHESES:")
+    for h in state.hypotheses:
+        badge = f"[{h.status.upper()}]"
+        conf = f"(Confidence: {h.confidence})"
+        print(f"  {badge:15} {h.id}: {conf}")
+        print(f"    Statement:   {h.statement}")
+        print(f"    Explanation: {h.explanation}")
+        if h.supporting_evidence_ids:
+            print(f"    Supporting:  {len(h.supporting_evidence_ids)} evidence items")
+        print()
+
+    print("4. PRIMARY HYPOTHESIS & ROOT CAUSE:")
+    if state.selected_hypothesis:
+        print(f"  Selected:   {state.selected_hypothesis.statement}")
+        print(f"  Confidence: {state.selected_hypothesis.confidence.upper()}")
+    else:
+        print("  No primary hypothesis confirmed.")
+
+    print("\n5. PROPOSED SAFE RECOVERY PLAN:")
+    if state.planned_actions:
+        for i, a in enumerate(state.planned_actions, 1):
+            print(f"  Action {i}: {a.tool_name} (Risk: {a.risk})")
+            print(f"    Target:  {a.arguments}")
+            print(f"    Purpose: {a.purpose}")
+    else:
+        print("  No recovery actions proposed.")
+    print()
+
+def cmd_agent_incident(env: ProcessTargetEnvironment, count: int = 6):
+    from agent.orchestrator import IncidentOrchestrator
+    from services.config import PAYMENT_SERVICE_URL
+    from telemetry.traffic import generate_traffic
+    import httpx
+
+    print("\n======================================================================")
+    print(" [ChaosPilot SRE Agent] REAL CONTROLLED INCIDENT SIMULATION & RECOVERY")
+    print("======================================================================\n")
+
+    # Step 1: Ensure services are running and healthy
+    print("[Step 1] Checking baseline microservice environment...")
+    health = env.check_all_health()
+    if not all(h.get("status") == "healthy" for h in health.values()):
+        print("  * Starting / resetting services to healthy state...")
+        env.start_all()
+        time.sleep(2.0)
+
+    # Step 2: Establish healthy traffic baseline
+    print("[Step 2] Sending baseline nominal traffic (4 requests)...")
+    res_base = generate_traffic(num_requests=4, concurrency=1, interval_seconds=0.03)
+    print(f"  * Baseline success rate: {res_base['successful_requests']}/{res_base['total_requests']} (Avg latency: {res_base['avg_latency_ms']}ms)")
+
+    # Step 3: Inject controlled payment timeout fault
+    print("[Step 3] Injecting controlled payment timeout fault (mode=timeout, delay=4.5s)...")
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            client.post(f"{PAYMENT_SERVICE_URL}/fault/inject", json={
+                "mode": "timeout",
+                "delay_seconds": 4.5,
+                "error_code": 504,
+                "description": "Controlled payment-processing timeout fault (artificial delay exceeding upstream budget)"
+            })
+    except Exception as e:
+        print(f"  * Warning injecting fault: {e}")
+
+    # Step 4: Generate incident checkout traffic
+    print(f"[Step 4] Generating real incident traffic ({count} requests)...")
+    res_inc = generate_traffic(num_requests=count, concurrency=2, interval_seconds=0.03)
+    print(f"  * Incident traffic completed: {res_inc['failed_requests']} failed (Error rate: {res_inc['error_rate']*100:.1f}%)")
+    print(f"  * Status distribution: {res_inc['status_distribution']}")
+
+    # Step 5: Launch Agentic Incident Response Loop
+    print("\n[Step 5] Launching ChaosPilot SRE Agent (Investigate -> Remediate -> Verify -> Report)...")
+    orchestrator = IncidentOrchestrator(env=env)
+    state, report = orchestrator.run_incident_response(execute_recovery=True)
+
+    # Step 6: Print Postmortem Report
+    print(f"\n======================================================================")
+    print(f" [ChaosPilot SRE Agent] FINAL INCIDENT REPORT: {report.incident_id}")
+    print(f" Final Status: {report.final_status.upper()}")
+    print(f" Duration:     {report.started_at} -> {report.ended_at}")
+    print(f"======================================================================\n")
+
+    print(f"ROOT CAUSE:")
+    print(f"  {report.root_cause}\n")
+
+    print(f"ROOT CAUSE EVIDENCE CITATIONS:")
+    for eid in report.root_cause_evidence[:5]:
+        print(f"  * {eid}")
+
+    print(f"\nACTIONS EXECUTED:")
+    for a in report.actions_taken:
+        print(f"  * [{a['status'].upper()}] {a['tool_name']} on {a['target']} (Started: {a['started_at']})")
+
+    print(f"\nEMPIRICAL VERIFICATION RESULT:")
+    v = report.verification
+    print(f"  * Status:  {v.get('status')}")
+    print(f"  * Summary: {v.get('summary')}")
+    print(f"  * Checks:  {len(v.get('checks', []))} empirical verification probes passed.")
+    print()
 
 if __name__ == "__main__":
     main()
