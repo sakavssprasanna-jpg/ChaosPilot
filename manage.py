@@ -321,6 +321,13 @@ def cmd_multimodal_evidence(snapshot_path: str = None, audio_path: str = None, i
             print(f"  * Health:     {json.dumps(item.content.get('service_health', {}))}")
         print("-" * 70)
 
+def cmd_console():
+    import subprocess
+    import sys
+    print("[ChaosPilot] Launching Streamlit Multimodal Operator Console on http://localhost:8501 ...")
+    cmd = [sys.executable, "-m", "streamlit", "run", "app/streamlit_app.py", "--server.headless=true", "--server.port=8501"]
+    subprocess.run(cmd)
+
 def main():
     parser = argparse.ArgumentParser(description="ChaosPilot Management CLI (Stage 1 + Stage 2 + Stage 3 + Stage 4)")
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
@@ -391,6 +398,9 @@ def main():
     agent_inc_p = subparsers.add_parser("agent-incident", help="Run full real SRE incident simulation, diagnosis, and verified recovery")
     agent_inc_p.add_argument("--count", type=int, default=6, help="Requests during incident phase")
 
+    # Stage 6 Operator Console Command
+    subparsers.add_parser("console", help="Launch the Streamlit Multimodal Operator Console")
+
     restart_p = subparsers.add_parser("restart", help="Restart a specific service")
     restart_p.add_argument("service", choices=["gateway", "order-service", "payment-service"])
 
@@ -454,6 +464,8 @@ def main():
         cmd_agent_investigate(env, snapshot_path=args.snapshot)
     elif args.command == "agent-incident":
         cmd_agent_incident(env, count=args.count)
+    elif args.command == "console":
+        cmd_console()
     elif args.command == "fault":
         if args.fault_action == "inject":
             cmd_fault_inject(args.mode, args.delay)

@@ -116,6 +116,8 @@ class IncidentState:
     planned_actions: List[PlannedAction] = field(default_factory=list)
     executed_actions: List[ActionResult] = field(default_factory=list)
     verification_results: List[VerificationResult] = field(default_factory=list)
+    events: List[Dict[str, Any]] = field(default_factory=list)
+    directive: Optional[str] = None
     final_status: str = "open"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -123,6 +125,7 @@ class IncidentState:
             "incident_id": self.incident_id,
             "started_at": self.started_at,
             "phase": self.phase,
+            "directive": self.directive,
             "observations": self.observations,
             "evidence": [e.to_dict() if hasattr(e, "to_dict") else str(e) for e in self.evidence],
             "hypotheses": [h.to_dict() for h in self.hypotheses],
@@ -130,6 +133,7 @@ class IncidentState:
             "planned_actions": [a.to_dict() for a in self.planned_actions],
             "executed_actions": [a.to_dict() for a in self.executed_actions],
             "verification_results": [v.to_dict() for v in self.verification_results],
+            "events": self.events,
             "final_status": self.final_status
         }
 
