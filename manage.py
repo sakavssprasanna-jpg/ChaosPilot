@@ -192,8 +192,137 @@ def cmd_evidence(snapshot_path: str = None):
 
     print(f"\nCITED SOURCES: {', '.join(bundle.sources)}\n")
 
+def cmd_transcribe(audio_path: str, backend: str = "google_web_speech"):
+    from multimodal.voice_transcriber import VoiceTranscriber
+    print(f"[ChaosPilot Voice] Transcribing audio: {audio_path} (backend={backend})...")
+    transcriber = VoiceTranscriber(backend=backend)
+    res = transcriber.transcribe_file(audio_path)
+    print(f"\nTranscription Result ({res.status}):")
+    print(f"  * Transcript: \"{res.transcript}\"")
+    print(f"  * Source:     {res.source}")
+    print(f"  * Format:     {res.audio_format} ({res.duration_seconds}s)")
+    print(f"  * Confidence: {res.confidence}")
+    print(f"  * Backend:    {res.backend}")
+    if res.error:
+        print(f"  * Error:      {res.error}")
+
+def cmd_synthesize(text: str, output_path: str = None):
+    from multimodal.voice_synthesizer import VoiceSynthesizer
+    print(f"[ChaosPilot Voice] Synthesizing speech for text: \"{text}\"...")
+    synthesizer = VoiceSynthesizer()
+    res = synthesizer.synthesize(text, output_path=output_path)
+    print(f"\nSynthesis Result ({res.status}):")
+    print(f"  * Text:        \"{res.text}\"")
+    print(f"  * Output File: {res.output_audio_path}")
+    print(f"  * Audio Bytes: {res.audio_bytes_length}")
+    print(f"  * Backend:     {res.backend}")
+    if res.error:
+        print(f"  * Error:       {res.error}")
+
+def cmd_inspect_image(image_path: str, backend: str = None, prompt: str = None):
+    from multimodal.vision_inspector import VisionInspector
+    inspector = VisionInspector(backend=backend)
+    print(f"[ChaosPilot Vision] Inspecting image: {image_path} (backend={inspector.backend})...")
+    res = inspector.inspect(image_path, prompt=prompt)
+    print(f"\nVisual Inspection Result ({res.status}):")
+    print(f"  * Image ID:     {res.image_id}")
+    print(f"  * Source:       {res.source}")
+    print(f"  * Backend:      {res.backend}")
+    print(f"  * Metadata:     {json.dumps(res.metadata)}")
+    print(f"  * Observations ({len(res.observations)}):")
+    for obs in res.observations:
+        print(f"    - {obs}")
+    if res.error:
+        print(f"  * Error:        {res.error}")
+
+def cmd_visualize_topology(output_path: str = None):
+    from multimodal.visualizer import generate_topology_diagram
+    print("[ChaosPilot Vision] Generating service topology diagram...")
+    path = generate_topology_diagram(output_path=output_path)
+    print(f"Topology diagram successfully saved to: {path}")
+
+def cmd_visualize_telemetry(output_path: str = None, window_seconds: float = None):
+    from multimodal.visualizer import generate_telemetry_chart
+    print("[ChaosPilot Vision] Generating real telemetry performance chart...")
+    path = generate_telemetry_chart(output_path=output_path, window_seconds=window_seconds)
+    print(f"Telemetry chart successfully saved to: {path}")
+
+def cmd_multimodal_evidence(snapshot_path: str = None, audio_path: str = None, image_path: str = None):
+    from pathlib import Path
+    from services.config import LOGS_DIR
+    from rag.coordinator import diagnose_evidence
+    from multimodal.schema import MultimodalEvidenceBundle, MultimodalEvidenceItem, utc_now_iso
+    from multimodal.voice_transcriber import VoiceTranscriber
+    from multimodal.vision_inspector import VisionInspector
+
+    if not snapshot_path:
+        snap_dir = LOGS_DIR / "snapshots"
+        snapshots = sorted(snap_dir.glob("snapshot_*.json")) if snap_dir.exists() else []
+        if snapshots:
+            snapshot_path = str(snapshots[-1])
+        else:
+            print("[ChaosPilot Multimodal] No snapshot found. Running requires snapshot or metrics.")
+            return
+
+    with open(snapshot_path, "r", encoding="utf-8") as f:
+        snapshot_data = json.load(f)
+
+    stage3_bundle = diagnose_evidence(snapshot_path)
+
+    bundle = MultimodalEvidenceBundle(
+        bundle_id=f"bundle_{int(time.time()*1000)}",
+        timestamp=utc_now_iso(),
+        query=stage3_bundle.query
+    )
+
+    # 1. Telemetry evidence
+    bundle.add_item(MultimodalEvidenceBundle.from_telemetry_snapshot(snapshot_data, snapshot_path))
+
+    # 2. Document evidence (text)
+    for doc in stage3_bundle.documents:
+        bundle.add_item(MultimodalEvidenceBundle.from_document_citation(doc))
+
+    # 3. Git evidence
+    for git in stage3_bundle.git_evidence:
+        bundle.add_item(MultimodalEvidenceBundle.from_git_citation(git))
+
+    # 4. Optional Voice evidence
+    if audio_path:
+        print(f"[ChaosPilot Voice] Processing audio evidence: {audio_path}...")
+        vt = VoiceTranscriber().transcribe_file(audio_path)
+        bundle.add_item(MultimodalEvidenceBundle.from_voice_transcript(vt))
+
+    # 5. Optional Vision evidence
+    if image_path:
+        print(f"[ChaosPilot Vision] Processing visual evidence: {image_path}...")
+        vi = VisionInspector().inspect(image_path)
+        bundle.add_item(MultimodalEvidenceBundle.from_visual_inspection(vi))
+
+    print(f"\n======================================================================")
+    print(f" [ChaosPilot] UNIFIED MULTIMODAL EVIDENCE BUNDLE: {bundle.bundle_id}")
+    print(f" Query Context: {bundle.query}")
+    print(f" Total Evidence Items: {len(bundle.items)}")
+    print(f"======================================================================\n")
+
+    for i, item in enumerate(bundle.items, 1):
+        print(f"[{item.modality.upper()}] Item {i} ({item.evidence_id})")
+        print(f"  * Source:     {item.source}")
+        print(f"  * Provenance: {item.provenance}")
+        print(f"  * Status:     {item.status}")
+        if item.modality == "text":
+            print(f"  * Content:    {item.content[:150]}...")
+        elif item.modality == "voice_transcript":
+            print(f"  * Transcript: \"{item.content}\" (confidence={item.metadata.get('confidence')})")
+        elif item.modality == "visual_observation":
+            print(f"  * Observations: {item.content}")
+        elif item.modality == "git_diff":
+            print(f"  * Commit:     {item.metadata.get('commit')} by {item.metadata.get('author')}")
+        elif item.modality == "telemetry":
+            print(f"  * Health:     {json.dumps(item.content.get('service_health', {}))}")
+        print("-" * 70)
+
 def main():
-    parser = argparse.ArgumentParser(description="ChaosPilot Management CLI (Stage 1 + Stage 2 + Stage 3)")
+    parser = argparse.ArgumentParser(description="ChaosPilot Management CLI (Stage 1 + Stage 2 + Stage 3 + Stage 4)")
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
 
     subparsers.add_parser("start", help="Start all microservices")
@@ -228,6 +357,32 @@ def main():
     # Evidence
     evidence_p = subparsers.add_parser("evidence", help="Derive diagnostic evidence from incident snapshot")
     evidence_p.add_argument("--snapshot", type=str, default=None, help="Path to snapshot JSON (defaults to latest)")
+
+    # Stage 4 Multimodal Subparsers
+    transcribe_p = subparsers.add_parser("transcribe", help="Transcribe speech audio file into text")
+    transcribe_p.add_argument("audio_file", type=str, help="Path to audio file (wav, mp3, etc.)")
+    transcribe_p.add_argument("--backend", type=str, default="google_web_speech")
+
+    synthesize_p = subparsers.add_parser("synthesize", help="Synthesize text to speech audio file")
+    synthesize_p.add_argument("text", type=str, help="Text to speak")
+    synthesize_p.add_argument("--output", type=str, default=None, help="Target audio output path")
+
+    inspect_p = subparsers.add_parser("inspect-image", help="Inspect image using vision perception")
+    inspect_p.add_argument("image_file", type=str, help="Path to image file")
+    inspect_p.add_argument("--backend", choices=["none", "gemini", "local_structural"], default=None)
+    inspect_p.add_argument("--prompt", type=str, default=None)
+
+    vis_top_p = subparsers.add_parser("visualize-topology", help="Generate service topology diagram")
+    vis_top_p.add_argument("--output", type=str, default=None)
+
+    vis_tel_p = subparsers.add_parser("visualize-telemetry", help="Generate telemetry chart from logs/telemetry.db")
+    vis_tel_p.add_argument("--output", type=str, default=None)
+    vis_tel_p.add_argument("--window", type=float, default=None, help="Window seconds")
+
+    multi_ev_p = subparsers.add_parser("multimodal-evidence", help="Assemble unified multimodal evidence bundle")
+    multi_ev_p.add_argument("--snapshot", type=str, default=None, help="Path to incident snapshot")
+    multi_ev_p.add_argument("--audio", type=str, default=None, help="Optional audio evidence file")
+    multi_ev_p.add_argument("--image", type=str, default=None, help="Optional visual evidence image")
 
     restart_p = subparsers.add_parser("restart", help="Restart a specific service")
     restart_p.add_argument("service", choices=["gateway", "order-service", "payment-service"])
@@ -276,6 +431,18 @@ def main():
         cmd_retrieve(args.query, top_k=args.top_k)
     elif args.command == "evidence":
         cmd_evidence(args.snapshot)
+    elif args.command == "transcribe":
+        cmd_transcribe(args.audio_file, backend=args.backend)
+    elif args.command == "synthesize":
+        cmd_synthesize(args.text, output_path=args.output)
+    elif args.command == "inspect-image":
+        cmd_inspect_image(args.image_file, backend=args.backend, prompt=args.prompt)
+    elif args.command == "visualize-topology":
+        cmd_visualize_topology(args.output)
+    elif args.command == "visualize-telemetry":
+        cmd_visualize_telemetry(args.output, window_seconds=args.window)
+    elif args.command == "multimodal-evidence":
+        cmd_multimodal_evidence(args.snapshot, audio_path=args.audio, image_path=args.image)
     elif args.command == "fault":
         if args.fault_action == "inject":
             cmd_fault_inject(args.mode, args.delay)
@@ -286,3 +453,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
