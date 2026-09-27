@@ -118,6 +118,8 @@ class IncidentState:
     verification_results: List[VerificationResult] = field(default_factory=list)
     events: List[Dict[str, Any]] = field(default_factory=list)
     directive: Optional[str] = None
+    evidence_graph: Optional[Dict[str, Any]] = None
+    claims: List[Dict[str, Any]] = field(default_factory=list)
     final_status: str = "open"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -134,6 +136,8 @@ class IncidentState:
             "executed_actions": [a.to_dict() for a in self.executed_actions],
             "verification_results": [v.to_dict() for v in self.verification_results],
             "events": self.events,
+            "evidence_graph": self.evidence_graph,
+            "claims": self.claims,
             "final_status": self.final_status
         }
 
@@ -151,6 +155,7 @@ class IncidentReport:
     actions_taken: List[Dict[str, Any]]
     verification: Dict[str, Any]
     final_status: str
+    evidence_graph_summary: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -328,6 +328,25 @@ def cmd_console():
     cmd = [sys.executable, "-m", "streamlit", "run", "app/streamlit_app.py", "--server.headless=true", "--server.port=8501"]
     subprocess.run(cmd)
 
+def cmd_evaluate():
+    from evaluation import SystemEvaluator
+    print("\n======================================================================")
+    print(" [ChaosPilot] ADVANCED EVALUATION & BASELINE COMPARISON")
+    print("======================================================================\n")
+    evaluator = SystemEvaluator()
+    res = evaluator.evaluate_all()
+    print(res.summary_markdown)
+    print("\nDetailed Configuration Breakdown:")
+    for k, v in res.configurations.items():
+        print(f"\n* {v.get('name')}:")
+        print(f"    - Recall@3: {v.get('retrieval_recall_at_3')}")
+        print(f"    - Hypothesis: {'PASS' if v.get('hypothesis_correctness') else 'FAIL'}")
+        print(f"    - Safe Action: {'YES' if v.get('safe_action_executed') else 'NO'}")
+        print(f"    - Verified: {'PASS' if v.get('empirically_verified') else 'NO'}")
+        print(f"    - Final Status: {v.get('final_status')}")
+        if v.get('evidence_graph_nodes'):
+            print(f"    - Graph: {v.get('evidence_graph_nodes')} nodes, {v.get('evidence_graph_edges', 0)} edges, {v.get('grounded_claims_count', 0)} claims")
+
 def main():
     parser = argparse.ArgumentParser(description="ChaosPilot Management CLI (Stage 1 + Stage 2 + Stage 3 + Stage 4)")
     subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
@@ -401,6 +420,9 @@ def main():
     # Stage 6 Operator Console Command
     subparsers.add_parser("console", help="Launch the Streamlit Multimodal Operator Console")
 
+    # Stage 7 Evaluation Command
+    subparsers.add_parser("evaluate", help="Run empirical evaluation benchmark and baseline comparison")
+
     restart_p = subparsers.add_parser("restart", help="Restart a specific service")
     restart_p.add_argument("service", choices=["gateway", "order-service", "payment-service"])
 
@@ -466,6 +488,8 @@ def main():
         cmd_agent_incident(env, count=args.count)
     elif args.command == "console":
         cmd_console()
+    elif args.command == "evaluate":
+        cmd_evaluate()
     elif args.command == "fault":
         if args.fault_action == "inject":
             cmd_fault_inject(args.mode, args.delay)

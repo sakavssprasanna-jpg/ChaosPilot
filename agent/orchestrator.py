@@ -25,6 +25,7 @@ from agent.tools import ToolRegistry
 from agent.verifier import RecoveryVerifier
 from sandbox.process_sandbox import ProcessTargetEnvironment
 from telemetry.snapshot import create_incident_snapshot
+from agent.evidence_graph import EvidenceGraphBuilder
 
 class IncidentOrchestrator:
     """Orchestrates the explicit SRE incident response lifecycle:
@@ -166,6 +167,19 @@ class IncidentOrchestrator:
             state.observations.append(no_plan_msg)
             self._emit(state, "action_planning", no_plan_msg, {}, cb)
 
+        # 5. Evidence Graph & Grounded Claims
+        graph_builder = EvidenceGraphBuilder()
+        graph = graph_builder.build_graph(state, snapshot=snapshot_data)
+        state.evidence_graph = graph.to_dict()
+        state.claims = [c.to_dict() for c in graph.claims.values()]
+        eg_msg = f"Constructed empirical evidence graph ({len(graph.nodes)} nodes, {len(graph.edges)} edges, {len(graph.claims)} claims)."
+        state.observations.append(eg_msg)
+        self._emit(state, "evidence_graph", eg_msg, {
+            "node_count": len(graph.nodes),
+            "edge_count": len(graph.edges),
+            "claim_count": len(graph.claims)
+        }, cb)
+
         return state
 
     def run_incident_response(
@@ -278,6 +292,18 @@ class IncidentOrchestrator:
             else {"status": "not_verified", "summary": "No verification loop executed."}
         )
 
+        # Update evidence graph with latest actions & verification
+        graph_builder = EvidenceGraphBuilder()
+        graph = graph_builder.build_graph(state, snapshot=initial_snapshot)
+        state.evidence_graph = graph.to_dict()
+        state.claims = [c.to_dict() for c in graph.claims.values()]
+
+        evidence_graph_summary = {
+            "node_count": len(graph.nodes),
+            "edge_count": len(graph.edges),
+            "claim_count": len(graph.claims)
+        }
+
         return IncidentReport(
             incident_id=state.incident_id,
             started_at=state.started_at,
@@ -293,5 +319,6 @@ class IncidentOrchestrator:
             root_cause_evidence=root_cause_evidence,
             actions_taken=[a.to_dict() for a in state.executed_actions],
             verification=verification_summary,
-            final_status=state.final_status
+            final_status=state.final_status,
+            evidence_graph_summary=evidence_graph_summary
         )

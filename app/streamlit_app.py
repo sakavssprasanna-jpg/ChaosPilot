@@ -417,12 +417,13 @@ def main():
                     st.markdown(f"- {obs}")
 
         # 3. Structured Deep SRE Diagnostic Tabs
-        tab_root, tab_evidence, tab_recovery, tab_verify, tab_debrief = st.tabs([
+        tab_root, tab_evidence, tab_recovery, tab_verify, tab_debrief, tab_graph = st.tabs([
             "🧠 Root Cause Analysis",
             "📂 Evidence (5 Modalities)",
             "🛠️ Actions & Recovery",
             "🔬 Before/After Verification",
-            "🎙️ Spoken Debrief (TTS)"
+            "🎙️ Spoken Debrief (TTS)",
+            "🕸️ Evidence Graph & Evaluation"
         ])
 
         # Tab 1: Root Cause
@@ -588,6 +589,84 @@ def main():
             if st.session_state.debrief_audio_path and Path(st.session_state.debrief_audio_path).exists():
                 st.audio(st.session_state.debrief_audio_path, format="audio/mp3")
                 st.caption(f"Audio Artifact: `{st.session_state.debrief_audio_path}`")
+
+        # Tab 6: Evidence Graph & Progressive Evaluation
+        with tab_graph:
+            st.markdown("### 🕸️ Empirical Evidence Graph & Progressive Evaluation")
+            st.caption("Explicit causal and correlational graph connecting telemetry, runbooks, topology, claims, hypotheses, actions, and verification.")
+
+            from agent.evidence_graph import EvidenceGraph, EvidenceGraphBuilder
+            from evaluation import SystemEvaluator
+
+            graph = None
+            if getattr(state, "evidence_graph", None):
+                graph = EvidenceGraph.from_dict(state.evidence_graph)
+            else:
+                graph = EvidenceGraphBuilder().build_graph(state)
+
+            # Top-level Graph Metrics
+            g1, g2, g3 = st.columns(3)
+            g1.metric("Graph Nodes", len(graph.nodes))
+            g2.metric("Evidence Edges", len(graph.edges))
+            g3.metric("Grounded Claims", len(graph.claims))
+
+            sub_view, sub_claims, sub_eval = st.tabs([
+                "📊 Topology & Evidence Graph",
+                "⚖️ Grounded Claims Analysis",
+                "📈 Benchmark & Baseline Evaluation"
+            ])
+
+            with sub_view:
+                st.markdown("#### Topological & Causal Evidence Graph (Mermaid)")
+                mermaid_code = graph.to_mermaid(direction="TD")
+                st.markdown(f"```mermaid\n{mermaid_code}\n```")
+
+                with st.expander("🔍 Inspect Raw Graph JSON (Serializable)", expanded=False):
+                    st.json(graph.to_dict())
+
+            with sub_claims:
+                st.markdown("#### Grounded Claims Evaluation")
+                st.caption("Qualitative support strength derived strictly from empirical evidence. No fabricated probabilities.")
+
+                for claim in graph.claims.values():
+                    badge = "⚪ UNSUPPORTED"
+                    if claim.support_strength == "strongly_supported":
+                        badge = "🟢 STRONGLY SUPPORTED"
+                    elif claim.support_strength == "supported":
+                        badge = "🟢 SUPPORTED"
+                    elif claim.support_strength == "weakly_supported":
+                        badge = "🟡 WEAKLY SUPPORTED"
+                    elif claim.support_strength == "contradicted":
+                        badge = "🔴 CONTRADICTED"
+
+                    with st.container(border=True):
+                        st.markdown(f"**`[{badge}]`** `{claim.claim_id}`")
+                        st.markdown(f"> *{claim.statement}*")
+
+                        c_col1, c_col2 = st.columns(2)
+                        with c_col1:
+                            st.markdown("**Supporting Evidence:**")
+                            if claim.evidence_ids:
+                                for eid in claim.evidence_ids:
+                                    st.markdown(f"- `[{eid}]`")
+                            else:
+                                st.caption("None (0 empirical support)")
+
+                        with c_col2:
+                            st.markdown("**Contradicting Evidence:**")
+                            if claim.contradictions:
+                                for cid in claim.contradictions:
+                                    st.markdown(f"- `[{cid}]`")
+                            else:
+                                st.caption("None (0 contradictions)")
+
+            with sub_eval:
+                st.markdown("#### Progressive Baseline Evaluation")
+                st.caption("Measurable comparison across 4 configurations on the controlled incident benchmark fixture.")
+
+                evaluator = SystemEvaluator()
+                eval_res = evaluator.evaluate_all(sample_snapshot=report.initial_state if hasattr(report, "initial_state") else None)
+                st.markdown(eval_res.summary_markdown)
 
 
 if __name__ == "__main__":
