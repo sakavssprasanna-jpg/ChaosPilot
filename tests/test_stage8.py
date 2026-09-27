@@ -553,3 +553,29 @@ def test_full_system_compatibility_baseline():
     assert orchestrator.hypothesis_engine is not None
     assert orchestrator.verifier is not None
     assert orchestrator.correlator is not None
+
+
+# ---------------------------------------------------------------------------
+# Test 24: Regression test covering failed branch of evaluate_config_c
+# ---------------------------------------------------------------------------
+def test_evaluate_config_c_failed_branch_regression():
+    """Verify evaluate_config_c_agentic_rag_verification handles unverified/failed snapshots.
+
+    Specifically covers the branch where safe_action and hyp_correct is False,
+    ensuring VerificationStatus.VERIFICATION_FAILED is used without raising AttributeError.
+    """
+    evaluator = SystemEvaluator()
+    # An empty snapshot produces no supported hypotheses or matching remediation
+    failed_res = evaluator.evaluate_config_c_agentic_rag_verification(snapshot={})
+
+    assert failed_res["hypothesis_correctness"] is False
+    assert failed_res["safe_action_executed"] is False
+    assert failed_res["empirically_verified"] is False
+    assert failed_res["final_status"] == "unresolved"
+
+    # Also verify Config D failed branch operates without AttributeError
+    failed_d_res = evaluator.evaluate_config_d_multimodal_graph_verification(snapshot={})
+    assert failed_d_res["hypothesis_correctness"] is False
+    assert failed_d_res["empirically_verified"] is False
+    assert failed_d_res["final_status"] == "unresolved"
+

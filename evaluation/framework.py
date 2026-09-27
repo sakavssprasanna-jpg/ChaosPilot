@@ -155,7 +155,7 @@ class SystemEvaluator:
         safe_action = safe_action_selected(state.planned_actions, self.allowlisted_tools)
 
         ver_result = VerificationResult(
-            status=VerificationStatus.VERIFIED_RECOVERED.value if safe_action and hyp_correct else VerificationStatus.FAILED.value,
+            status=VerificationStatus.VERIFIED_RECOVERED.value if safe_action and hyp_correct else VerificationStatus.VERIFICATION_FAILED.value,
             checks=[
                 {"name": "health_check", "status": "healthy"},
                 {"name": "fault_status", "status": "cleared"},
@@ -207,7 +207,7 @@ class SystemEvaluator:
         safe_action = safe_action_selected(state.planned_actions, self.allowlisted_tools)
 
         ver_result = VerificationResult(
-            status=VerificationStatus.VERIFIED_RECOVERED.value if safe_action and hyp_correct else VerificationStatus.FAILED.value,
+            status=VerificationStatus.VERIFIED_RECOVERED.value if safe_action and hyp_correct else VerificationStatus.VERIFICATION_FAILED.value,
             checks=[
                 {"name": "health_check", "status": "healthy"},
                 {"name": "fault_status", "status": "cleared"},
