@@ -1,0 +1,29 @@
+# ChaosPilot — Streamlit Cloud & Local Runtime Dependencies
+
+# Core UI & Web Framework
+streamlit>=1.35.0
+streamlit-mic-recorder>=0.0.8
+fastapi>=0.100.0
+uvicorn>=0.22.0
+httpx>=0.24.0
+pydantic>=2.0.0
+
+# Process Sandboxing & Repository Inspection
+psutil>=5.9.0
+GitPython>=3.1.30
+
+# Multimodal & Audio Processing
+Pillow>=10.0.0
+pydub>=0.25.1
+gTTS>=2.5.0
+matplotlib>=3.7.0
+SpeechRecognition>=3.10.0
+static-ffmpeg>=2.5
+
+# Lexical Knowledge Retrieval & Optional Gemini LLM SDK
+rank-bm25>=0.2.2
+google-genai>=0.1.0
+
+# Testing & Verification
+pytest>=7.0.0
+pytest-asyncio>=0.21.0

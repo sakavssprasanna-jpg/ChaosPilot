@@ -126,16 +126,20 @@ class ProcessTargetEnvironment(TargetEnvironment):
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
 
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            cwd=str(LOGS_DIR.parent),
-            creationflags=creationflags,
-            close_fds=True
-        )
-        self._processes[service_name] = proc
-        self._save_pid(service_name, proc.pid)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                cwd=str(LOGS_DIR.parent),
+                creationflags=creationflags,
+                close_fds=True
+            )
+            self._processes[service_name] = proc
+            self._save_pid(service_name, proc.pid)
+        except Exception as e:
+            logger.error(f"Failed to launch service '{service_name}': {e}")
+            return False
 
         if wait_healthy:
             start_time = time.time()

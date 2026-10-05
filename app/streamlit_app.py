@@ -9,6 +9,19 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import streamlit as st
 
+# Guarantee repository root is present in sys.path for Streamlit Cloud deployment
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+# Mirror Streamlit Cloud secrets to environment variables defensively
+try:
+    for _k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        if _k in st.secrets and _k not in os.environ:
+            os.environ[_k] = str(st.secrets[_k])
+except Exception:
+    pass
+
 from agent.models import (
     ActionStatus,
     ConfidenceLevel,
@@ -135,6 +148,15 @@ def main():
     if "operator_directive" not in st.session_state:
         st.session_state.operator_directive = "Investigate the payment outage and recover it safely."
 
+    # Ensure all expected runtime directories and telemetry database exist
+    for sub in ("snapshots", "audio", "visualizations"):
+        (LOGS_DIR / sub).mkdir(parents=True, exist_ok=True)
+    try:
+        from telemetry.db import init_db
+        init_db()
+    except Exception:
+        pass
+
     env: ProcessTargetEnvironment = st.session_state.env
 
     # ---------------------------------------------------------------------------
@@ -150,13 +172,22 @@ def main():
     with col_s1:
         if st.button("▶️ Start All", use_container_width=True):
             with st.spinner("Starting services..."):
-                env.start_all()
+                try:
+                    res = env.start_all()
+                    if not all(res.values()):
+                        failed = [s for s, ok in res.items() if not ok]
+                        st.sidebar.warning(f"Services not healthy: {', '.join(failed)}")
+                except Exception as e:
+                    st.sidebar.error(f"Error starting services: {e}")
                 time.sleep(1.5)
                 st.rerun()
     with col_s2:
         if st.button("⏹️ Stop All", use_container_width=True):
             with st.spinner("Stopping services..."):
-                env.stop_all()
+                try:
+                    env.stop_all()
+                except Exception as e:
+                    st.sidebar.error(f"Error stopping services: {e}")
                 time.sleep(0.5)
                 st.rerun()
 
@@ -332,32 +363,35 @@ def main():
 
         with st.status(f"ChaosPilot SRE Agent Running ({action_label})...", expanded=True) as status_box:
             st.write("Initializing target environment and event pipeline...")
-            orchestrator = IncidentOrchestrator(env=env)
+            try:
+                orchestrator = IncidentOrchestrator(env=env)
 
-            # Execute orchestrator with real event callbacks
-            t_start = time.time()
-            if execute_recovery:
-                state, report = orchestrator.run_incident_response(
-                    execute_recovery=True,
-                    directive=st.session_state.operator_directive
-                )
-                st.session_state.incident_state = state
-                st.session_state.incident_report = report
-            else:
-                state = orchestrator.investigate(
-                    directive=st.session_state.operator_directive
-                )
-                report = orchestrator.generate_report(state, create_incident_snapshot(env))
-                st.session_state.incident_state = state
-                st.session_state.incident_report = report
+                # Execute orchestrator with real event callbacks
+                t_start = time.time()
+                if execute_recovery:
+                    state, report = orchestrator.run_incident_response(
+                        execute_recovery=True,
+                        directive=st.session_state.operator_directive
+                    )
+                    st.session_state.incident_state = state
+                    st.session_state.incident_report = report
+                else:
+                    state = orchestrator.investigate(
+                        directive=st.session_state.operator_directive
+                    )
+                    report = orchestrator.generate_report(state, create_incident_snapshot(env))
+                    st.session_state.incident_state = state
+                    st.session_state.incident_report = report
 
-            duration = round(time.time() - t_start, 2)
-            if should_display_resolved(report, state):
-                status_box.update(label=f"ChaosPilot SRE Agent: INCIDENT RESOLVED ({duration}s)", state="complete", expanded=False)
-            else:
-                status_box.update(label=f"ChaosPilot SRE Agent Finished: {report.final_status.upper()} ({duration}s)", state="complete", expanded=False)
-
-        st.rerun()
+                duration = round(time.time() - t_start, 2)
+                if should_display_resolved(report, state):
+                    status_box.update(label=f"ChaosPilot SRE Agent: INCIDENT RESOLVED ({duration}s)", state="complete", expanded=False)
+                else:
+                    status_box.update(label=f"ChaosPilot SRE Agent Finished: {report.final_status.upper()} ({duration}s)", state="complete", expanded=False)
+                st.rerun()
+            except Exception as e:
+                status_box.update(label=f"ChaosPilot SRE Agent Error: {e}", state="error", expanded=True)
+                st.error(f"Agent execution encountered an error: {e}")
 
     # ---------------------------------------------------------------------------
     # Results: Timeline, Root Cause, Evidence, Recovery, Verification, Voice Debrief

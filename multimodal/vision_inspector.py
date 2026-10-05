@@ -8,9 +8,22 @@ from PIL import Image
 
 from multimodal.schema import VisualInspectionResult, utc_now_iso
 
+def get_gemini_credential() -> Optional[str]:
+    """Safely retrieves Gemini API key from environment or Streamlit secrets."""
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+            if key and not os.getenv("GEMINI_API_KEY"):
+                os.environ["GEMINI_API_KEY"] = str(key)
+        except Exception:
+            pass
+    return key
+
 def discover_vision_backend() -> Dict[str, Any]:
     """Inspects installed packages and environment credentials to determine available vision capabilities."""
-    has_gemini_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+    has_gemini_key = bool(get_gemini_credential())
 
     genai_installed = False
     try:
@@ -31,7 +44,7 @@ def discover_vision_backend() -> Dict[str, Any]:
             "local_capabilities": ["local_structural", "pillow"]
         }
     else:
-        reason = "GEMINI_API_KEY or GOOGLE_API_KEY not configured in environment" if not has_gemini_key else "google-genai SDK not installed"
+        reason = "GEMINI_API_KEY or GOOGLE_API_KEY not configured in environment or Streamlit secrets" if not has_gemini_key else "google-genai SDK not installed"
         return {
             "backend": "none",
             "available": False,
@@ -122,7 +135,7 @@ class VisionInspector:
 
         # 3. Handle Gemini multimodal backend if configured
         if self.backend == "gemini":
-            has_gemini_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+            has_gemini_key = bool(get_gemini_credential())
             if not has_gemini_key:
                 return VisualInspectionResult(
                     image_id=img_id,

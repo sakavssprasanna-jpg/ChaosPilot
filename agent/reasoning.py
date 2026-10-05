@@ -55,14 +55,28 @@ class GeminiReasoningBackend(ReasoningBackend):
 
     def __init__(self):
         self.deterministic_fallback = DeterministicReasoningBackend()
-        self.has_credentials = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+        self.has_credentials = self._check_credentials()
+
+    def _check_credentials(self) -> bool:
+        """Safely checks environment or Streamlit secrets for Gemini API credentials."""
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not key:
+            try:
+                import streamlit as st
+                key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
+                if key and not os.getenv("GEMINI_API_KEY"):
+                    os.environ["GEMINI_API_KEY"] = str(key)
+            except Exception:
+                pass
+        self.has_credentials = bool(key)
+        return self.has_credentials
 
     def reason(
         self,
         evidence: List[MultimodalEvidenceItem],
         candidates: List[Hypothesis]
     ) -> Dict[str, Any]:
-        if not self.has_credentials:
+        if not self._check_credentials():
             # Clean fallback to deterministic reasoning without fabricating
             fallback_res = self.deterministic_fallback.reason(evidence, candidates)
             fallback_res["backend"] = "deterministic_fallback_no_credentials"
